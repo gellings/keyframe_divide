@@ -132,8 +132,18 @@ include_directories(
 
 ## Declare a C++ executable
 add_executable(keyframe_divide_node src/keyframe_divide_node.cpp
-                                    src/vertex.cpp
-                                    include/vertex.h
+                                     include/segment-image.h
+                                     include/segment-graph.h
+                                     include/misc.h
+                                     include/imutil.h
+                                     include/imconv.h
+                                     include/image.h
+                                     include/filter.h
+                                     include/disjoint-set.h
+                                     include/convolve.h
+                                     include/process-edges.h
+#                                    src/vertex.cpp
+#                                    include/vertex.h
 #                                    src/bstree.cpp
 #                                    include/bstree.h
                                     )

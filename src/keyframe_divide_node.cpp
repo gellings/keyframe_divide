@@ -8,9 +8,9 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <cv_bridge/cv_bridge.h>
 
-#include "vertex.h"
-
-#include <fstream>
+#include "image.h"
+#include "misc.h"
+#include "segment-image.h"
 
 #define DSC 2
 #define DSR 1
@@ -28,17 +28,17 @@ bool isNAN(float val) { return (val != val) ? true : false; }
 
 void keyframeCallback(const relative_nav_msgs::Keyframe& msg)
 {
-    sensor_msgs::Image image;
-    sensor_msgs::Image depth;
+    sensor_msgs::Image image_msg;
+    sensor_msgs::Image depth_msg;
 
-    image = msg.rgb;
-    depth = msg.depth;
+    image_msg = msg.rgb;
+    depth_msg = msg.depth;
 
     cv_bridge::CvImagePtr cv_img_ptr, cv_dpth_ptr;
     try
     {
-        cv_img_ptr = cv_bridge::toCvCopy(image, image.encoding);
-        cv_dpth_ptr = cv_bridge::toCvCopy(depth, depth.encoding);
+        cv_img_ptr = cv_bridge::toCvCopy(image_msg, image_msg.encoding);
+        cv_dpth_ptr = cv_bridge::toCvCopy(depth_msg, depth_msg.encoding);
     }
     catch (cv_bridge::Exception& e)
     {
@@ -52,137 +52,77 @@ void keyframeCallback(const relative_nav_msgs::Keyframe& msg)
     int rows = cv_dpth.rows;
     int cols = cv_dpth.cols;
 
-    float edge_threshold = 0.2;
-
-    //----- averaging stuff
-    for(int i(0);i<rows;i++)
+    image<rgbdu> *im = new image<rgbdu>(cv_img.cols, cv_img.rows);
+    for(int i=0;i<cv_img.rows;i++)
     {
-        for(int j(0);j<cols;j++)
+        for(int j=0;j<cv_img.cols;j++)
         {
-            if(!isNAN(cv_dpth.at<float>(i,j)) && (weight_image.at<double>(i,j) < 3.0 || fabs((float)ave_image.at<double>(i,j) - cv_dpth.at<float>(i,j)) < edge_threshold))
+
+            rgbdu* p = imPtr(im, j, i);
+            p->r = cv_img.at<cv::Vec3b>(i,j)[2];
+            p->g = cv_img.at<cv::Vec3b>(i,j)[1];
+            p->b = cv_img.at<cv::Vec3b>(i,j)[0];
+            p->d = cv_dpth.at<float>(i,j);
+            if(p->d != p->d)
+                p->u = 18.0;
+            else
             {
-                ave_image.at<double>(i,j) = ( weight_image.at<double>(i,j)*ave_image.at<double>(i,j) + cv_dpth.at<float>(i,j) )/(weight_image.at<double>(i,j) + 1);
-                weight_image.at<double>(i,j) += 1.0;
+                p->u = .2*p->d;
+                if(i<rows-1 && !isNAN(cv_dpth.at<float>(i+1,j)))
+                    p->u += .1*fabs(p->d - cv_dpth.at<float>(i+1,j));
+                if(j<cols-1 && !isNAN(cv_dpth.at<float>(i,j+1)))
+                    p->u += .1*fabs(p->d - cv_dpth.at<float>(i,j+1));
+                if(i>0 && !isNAN(cv_dpth.at<float>(i-1,j)))
+                    p->u += .1*fabs(p->d - cv_dpth.at<float>(i-1,j));
+                if(j>0 && !isNAN(cv_dpth.at<float>(i,j-1)))
+                    p->u += .1*fabs(p->d - cv_dpth.at<float>(i,j-1));
+
+                if(i<rows-2 && !isNAN(cv_dpth.at<float>(i+2,j)))
+                    p->u += .05*fabs(p->d - cv_dpth.at<float>(i+2,j));
+                if(j<cols-2 && !isNAN(cv_dpth.at<float>(i,j+2)))
+                    p->u += .05*fabs(p->d - cv_dpth.at<float>(i,j+2));
+                if(i>1 && !isNAN(cv_dpth.at<float>(i-1,j)))
+                    p->u += .05*fabs(p->d - cv_dpth.at<float>(i+2,j));
+                if(j>1 && !isNAN(cv_dpth.at<float>(i,j-2)))
+                    p->u += .05*fabs(p->d - cv_dpth.at<float>(i,j-2));
             }
         }
     }
 
-    //depth image blur
-    Mat cv_dpth_blur;
-    //blur(ave_image,cv_dpth_blur,Size(5,5));
-    ave_image.copyTo(cv_dpth_blur);
-//    for(int i(0);i<rows;i++)
+//    for(int i=0;i<cv_img.rows;i++)
 //    {
-//        for(int j(0);j<cols;j++)
+//        for(int j=0;j<cv_img.cols;j++)
 //        {
-
-//            if(!(cv_dpth.at<float>(i,j) != cv_dpth.at<float>(i,j))) //not null
-//            {
-//                int div = 1;
-//                float sum = cv_dpth.at<float>(i,j);
-//                if(i > DSR && !(cv_dpth.at<float>(i-DSR,j) != cv_dpth.at<float>(i-DSR,j))) //not null
-//                {   sum += cv_dpth.at<float>(i-DSR,j); div++;  }
-//                if(j > DSC && !(cv_dpth.at<float>(i,j-DSC) != cv_dpth.at<float>(i,j-DSC))) //not null
-//                {   sum += cv_dpth.at<float>(i,j-DSC); div++;  }
-//                if(i < rows - DSR && !(cv_dpth.at<float>(i+DSR,j) != cv_dpth.at<float>(i+DSR,j))) //not null
-//                {   sum += cv_dpth.at<float>(i+DSR,j); div++;  }
-//                if(j < cols - DSC && !(cv_dpth.at<float>(i,j+DSC) != cv_dpth.at<float>(i,j+DSC))) //not null
-//                {   sum += cv_dpth.at<float>(i,j+DSC); div++;  }
-//                float val = sum/div;
-//                cv_dpth_blur.at<float>(i,j) = val;
-//            }
+//            rgbdu* p = imPtr(im, j, i);
+//            cv_dpth.at<float>(i,j) = p->u;
 //        }
 //    }
 
+    float sigma = 0.65;
+    float k = 150;
+    int min_size = 16500;
+    int num_ccs;
+    image<rgb> *seg = segment_image(im, sigma, k, 500, &num_ccs);
 
-    //----- Mesh file creation
-    std::ofstream meshfile("mesh.smf");
-    if(meshfile.is_open())
+    Mat cv_img_out = Mat(cv_img.rows, cv_img.cols, cv_img.type());
+
+    for(int i=0;i<cv_img_out.rows;i++)
     {
-        meshfile << "#$SMF 1.0\n";
-    }
-
-    Vertex* verticies[rows*cols];
-    int index_count = 1;
-
-    for(int i(0);i<rows;i++)
-    {
-        for(int j(0);j<cols;j++)
+        for(int j=0;j<cv_img_out.cols;j++)
         {
-            if(weight_image.at<double>(i,j) < 2.0)//isNAN(cv_dpth.at<float>(i,j)))  // depth value is NAN
-            {
-                verticies[i*cols + j] = NULL;
-            }
-            else
-            {
-                float depth = (float)cv_dpth_blur.at<double>(i,j);//ave_image.at<double>(i,j);//cv_dpth.at<float>(i,j);
-//                if(weight_image.at<double>(i,j+1) < 2.0 && weight_image.at<double>(i,j-1) < 2.0)
-//                    depth = (depth + (float)ave_image.at<double>(i,j+1) + weight_image.at<double>(i,j-1))/3;
-                Vertex* vert = new Vertex;
-                verticies[i*cols + j] = vert;
-                float s[1][1][2] ={{{j,i}}};
-                vector<Point2f> src;
-                src.push_back(Point2f(j,i));
-                //Mat src(1,1,CV_32FC2,s);
-                vector<Point2f> dst;
-                // fill src matrix
-                undistortPoints(src,dst,cameraMatrix,distCoeffs);
-                //cout << i << " " << dst[0].x << " " << j << " " << dst[0].y << endl;
-                float x = depth*dst[0].x;//depth*(dst[0].x - cx)/fx;
-                float y = depth*dst[0].y;//depth*(dst[0].y - cy)/fy;
-                float z = depth;
-                vert->pos = Vec3f(x,y,z);
-
-
-                if(meshfile.is_open() && i%DSR == 0 && j%DSC == 0)
-                {
-                    meshfile << "v " << x << " " << y << " " << z << "\n";
-                    vert->index = index_count;
-                    index_count++;
-                }
-            }
+            rgb* p = imPtr(seg, j, i);
+            cv_img_out.at<cv::Vec3b>(i,j)[2] = p->r;
+            cv_img_out.at<cv::Vec3b>(i,j)[1] = p->g;
+            cv_img_out.at<cv::Vec3b>(i,j)[0] = p->b;
         }
     }
-
-    for(int i(0);i<rows;i+=DSR)
-    {
-        for(int j(0);j<cols;j+=DSC)
-        {
-            if(verticies[i*cols + j] != NULL && i+DSR < rows && j+DSC < cols)
-            {
-                if(verticies[(i + DSR)*cols + j] != NULL && verticies[(i + DSR)*cols + (j + DSC)] != NULL
-                        && fabs(verticies[(i + DSR)*cols + (j + DSC)]->pos[2] - verticies[i*cols + j]->pos[2]) < edge_threshold
-                        && fabs(verticies[(i + DSR)*cols + j]->pos[2] - verticies[i*cols + j]->pos[2]) < edge_threshold
-                        && fabs(verticies[(i + DSR)*cols + (j + DSC)]->pos[2] - verticies[(i + DSR)*cols + j]->pos[2]) < edge_threshold )
-                {
-                    if(meshfile.is_open())
-                    {
-                        meshfile << "f " << verticies[i*cols + j]->index << " " << verticies[(i + DSR)*cols + j]->index << " " << verticies[(i + DSR)*cols + (j + DSC)]->index << "\n";
-                    }
-                }
-                if(verticies[(i + DSR)*cols + (j + DSC)] != NULL && verticies[i*cols + (j + DSC)] != NULL
-                        && fabs(verticies[(i + DSR)*cols + (j + DSC)]->pos[2] - verticies[i*cols + j]->pos[2]) < edge_threshold
-                        && fabs(verticies[i*cols + (j + DSC)]->pos[2] - verticies[i*cols + j]->pos[2]) < edge_threshold
-                        && fabs(verticies[(i + DSR)*cols + (j + DSC)]->pos[2] - verticies[i*cols + (j + DSC)]->pos[2]) < edge_threshold)
-                {
-                    if(meshfile.is_open())
-                    {
-                        meshfile << "f " << verticies[i*cols + j]->index << " " << verticies[(i + DSR)*cols + (j + DSC)]->index << " " << verticies[i*cols + (j + DSC)]->index << "\n";
-                    }
-                }
-            }
-        }
-    }
-    meshfile.close();
-
-
 
 
     // convert a depth image to show with opencv
 //    Mat show;
 //    cv_dpth_blur.convertTo(show,CV_8U,255.0/(max-min));
 //    Size k(3,3);
-    imshow("Image window", cv_img);
+    imshow("Image window", cv_img_out);
     waitKey(3);
 
     //---- publish the devided keyframe
